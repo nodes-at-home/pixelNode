@@ -49,10 +49,11 @@ class MaxMatrix
     int printEmptyCol ( int col );
     int printChar ( char c, int atColumn );
     
-    void init();
-    void clear();
-    void setCommand(byte command, byte value);
-    void setIntensity(byte intensity);
+    void init ();
+    void init ( byte intensity );
+    void clear ();
+    void setCommand ( byte command, byte value );
+    void setIntensity ( byte intensity );
     
 };
 

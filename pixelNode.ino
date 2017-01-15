@@ -122,7 +122,7 @@ time_t currentTime, lastTime;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
 
-const int DEFAULT_DISPLAY_CATEGORY_PERIOD = 10; // sec
+const int DEFAULT_DISPLAY_CATEGORY_PERIOD = 5; // sec
 int displayCategoryPeriod = DEFAULT_DISPLAY_CATEGORY_PERIOD;
 int displayCategoryPeriodCounter = 100;
 int displayCategory = -1;
@@ -153,10 +153,11 @@ const int DEFAULT_ALERT_DISPLAY_DURATION = 15;
 const int NUM_MESSAGES = 10;
 char* msgText [NUM_MESSAGES] [200];
 boolean isMsgText [NUM_MESSAGES];
+boolean isMsgEnabled [NUM_MESSAGES];
 
 boolean isDisplayTime = true;
 boolean isDisplayDate = true;
-boolean isDisplayWeekday = true;
+boolean isDisplayWeekday = false;
 int displayBrightness = 0;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
@@ -228,6 +229,13 @@ void setup () {
     MY_SERIAL.print ( "[SETUP] now: " );
     digitalClockDisplay ( now () );
 
+	// --- msgText -------------------------------------------------------------
+	
+	for ( int i = 0; i < NUM_MESSAGES; i++ ) {
+		isMsgText [i] = false;
+		isMsgEnabled [i] = true;
+	}
+
     // --- init mqtt -----------------------------------------------------------
     MY_SERIAL << "[SETUP] mqtt: server=" << MQTT_SERVER << " port=" << MQTT_PORT << " version=" << MQTT_VERSION << endl;
     mqttClient.setServer ( MQTT_SERVER, MQTT_PORT );
@@ -251,7 +259,8 @@ void setup () {
 		"brightness" : nn,
         "time" : true,
         "date" : true,
-        "weekday" : true
+        "weekday" : true,
+		"enabled" : [ true, ..., false ]     // flags for 10 messages
     },
     "messages" : [ // no is 0 .. 9
         { "line" : n, "text" : "string", "clear" : true },      // clear "overwrites" text, clear = false has no effect
@@ -273,12 +282,12 @@ void mqttCallback ( char* topic, byte* payload, unsigned int payloadLength ) {
     for ( int i = 0; i < payloadLength; i++ ) MY_SERIAL.print ( (char) payload [i] );
     MY_SERIAL.println ( "[" );
 
-    char buf [200] = { 0 };
+    char buf [512] = { 0 };
     int len = payloadLength < sizeof ( buf ) ? payloadLength : sizeof ( buf ) - 1;
     strncpy ( buf, (const char*) payload, len );
     buf [len] = '\0';
 
-    StaticJsonBuffer<200> jsonBuffer;
+    StaticJsonBuffer<512> jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject ( buf );
 
     if ( strcmp ( topic, MQTT_TOPIC_COMMAND ) == 0 ) {
@@ -314,6 +323,14 @@ void mqttCallback ( char* topic, byte* payload, unsigned int payloadLength ) {
                     String state = display ["weekday"];
                     isDisplayWeekday = state == "on" ? true : false;
                 }
+				if ( display.containsKey ( "enabled" ) && display ["enabled"].is<JsonArray&> () ) {
+					JsonArray& enabled = display ["enabled"];
+					for ( int i = 0; i < NUM_MESSAGES; i++ ) {
+						String state = enabled.get<String> ( i );
+						// MY_SERIAL << "i=" << i << " state=" << state << endl;
+						isMsgEnabled [i] = state == "off" ? false : true;
+					}
+				}
             }
             if ( root.containsKey ( "messages" ) ) {
                 // MY_SERIAL << "[MQTT] messages" << endl;
@@ -914,7 +931,7 @@ void loop() {
                     case 12: // msg [9]
                         matrixInsertColumn = 0;
                         alertDisplayDuration = -1;
-                        if ( isMsgText [msg] ) {
+                        if ( isMsgText [msg] && isMsgEnabled [msg] ) {
                             matrixAppendText ( getMsgText ( msg ) );
                         }
                         else {

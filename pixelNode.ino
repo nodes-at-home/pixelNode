@@ -30,11 +30,7 @@
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
 
-#define VERSION "V0.10 (pixelNode)"
-
-// ------------------------------------------------------------------------------------------------------------------------------------------
-
-#define MY_SERIAL Serial
+#define VERSION "V0.11 (pixelNode)"
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -42,9 +38,9 @@
 // const int MATRIX_LOAD_PIN = 12;      // gelb CS pin of MAX7219 module      -> D6
 // const int MATRIX_CLOCK_PIN = 13;     // schwarz CLK pin of MAX7219 module  -> D7
 
-const int MATRIX_DATA_PIN = 13;      // grün DIN pin of MAX7219 module     -> D7
-const int MATRIX_LOAD_PIN = 15;      // gelb CS pin of MAX7219 module      -> D8
-const int MATRIX_CLOCK_PIN = 14;     // schwarz CLK pin of MAX7219 module  -> D5
+const int MATRIX_DATA_PIN = 0;      // grün DIN pin of MAX7219 module     -> D3
+const int MATRIX_LOAD_PIN = 4;      // gelb CS pin of MAX7219 module      -> D2
+const int MATRIX_CLOCK_PIN = 5;     // schwarz CLK pin of MAX7219 module  -> D1
 
 const int MATRIX_MAX_IN_USE = 8;    //change this variable to set how many MAX7219's you'll use
 
@@ -122,11 +118,23 @@ time_t currentTime, lastTime;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
 
+const int NUM_MESSAGES = 20;
+char* msgText [NUM_MESSAGES] [200];
+boolean isMsgText [NUM_MESSAGES];
+boolean isMsgEnabled [NUM_MESSAGES];
+
+boolean isDisplayTime = true;
+boolean isDisplayDate = true;
+boolean isDisplayWeekday = false;
+int displayBrightness = 0;
+
+// ------------------------------------------------------------------------------------------------------------------------------------------
+
 const int DEFAULT_DISPLAY_CATEGORY_PERIOD = 5; // sec
 int displayCategoryPeriod = DEFAULT_DISPLAY_CATEGORY_PERIOD;
 int displayCategoryPeriodCounter = 100;
 int displayCategory = -1;
-const int MAX_DISPLAY_CATEGORY = 12;
+const int MAX_DISPLAY_CATEGORY = 2 + NUM_MESSAGES;
 
 boolean isDisplayCategoryTime = false;
 
@@ -145,20 +153,11 @@ const long MQTT_RECONNECT_PERIOD = 5000L;
 
 const char* MQTT_TOPIC_BASE =    "nodes@home/display/pixel/kitchen";
 const char* MQTT_TOPIC_COMMAND = "nodes@home/display/pixel/kitchen/command";
+const char* MQTT_TOPIC_ALERT = "nodes@home/display/pixel/kitchen/alert";
+const char* MQTT_TOPIC_MESSAGE = "nodes@home/display/pixel/kitchen/message";
+const char* MQTT_TOPIC_MESSAGE_SUBSCRIPTION = "nodes@home/display/pixel/kitchen/message/#";
 
 const int DEFAULT_ALERT_DISPLAY_DURATION = 15;
-
-// ------------------------------------------------------------------------------------------------------------------------------------------
-
-const int NUM_MESSAGES = 10;
-char* msgText [NUM_MESSAGES] [200];
-boolean isMsgText [NUM_MESSAGES];
-boolean isMsgEnabled [NUM_MESSAGES];
-
-boolean isDisplayTime = true;
-boolean isDisplayDate = true;
-boolean isDisplayWeekday = false;
-int displayBrightness = 0;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -173,11 +172,11 @@ void setup () {
     matrix.init ( 0x00 ); // module initialize, dot matix intensity 0-15
     clearMatrix ();
 
-    // --- init MY_SERIAL --------------------------------------------------------
+    // --- init Serial --------------------------------------------------------
     Serial.begin ( 9600 );
     delay ( 2 );
-    MY_SERIAL.print ( "\n[SETUP] start version=" ); // first MY_SERIAL print!
-    MY_SERIAL.println ( VERSION );
+    Serial.print ( "\n[SETUP] start version=" ); // first Serial print!
+    Serial.println ( VERSION );
 
     // --- init interrupt routine ---------------------------------------------
     // Timer1.initialize ( 50 ); // 50 µs, prescale is set by lib
@@ -194,8 +193,8 @@ void setup () {
     delay ( SETUP_DELAY );
 
     // --- init wifi ----------------------------------------------------------
-    MY_SERIAL.print ( "[SETUP] connecting " );
-    MY_SERIAL.print ( ssid );
+    Serial.print ( "[SETUP] connecting " );
+    Serial.print ( ssid );
 
     clearMatrix ();
     matrix.init ();
@@ -205,11 +204,11 @@ void setup () {
     while ( WiFi.status () != WL_CONNECTED ) {
         delay ( 500 );
         matrixAppendText ( "." );
-        MY_SERIAL.print ( '.' );
+        Serial.print ( '.' );
     }
 
-    MY_SERIAL << endl << "[SETUP] connected with ip ";
-    MY_SERIAL.println ( WiFi.localIP () );
+    Serial << endl << "[SETUP] connected with ip ";
+    Serial.println ( WiFi.localIP () );
 
     clearMatrix ();
     matrix.init ();
@@ -217,27 +216,32 @@ void setup () {
     matrixAppendText ( WiFi.localIP ().toString ().c_str () );
 
     // --- init ntp -----------------------------------------------------------
-    MY_SERIAL.print ( "[SETUP] ntp server=" );
+    Serial.print ( "[SETUP] ntp server=" );
     for ( int i = 0; i < 4; i++ ) {
-        MY_SERIAL.print ( SNTP_SERVER_IP [i] );
-        if ( i < 3 ) MY_SERIAL.print ( "." );
-        else MY_SERIAL.println ();
+        Serial.print ( SNTP_SERVER_IP [i] );
+        if ( i < 3 ) Serial.print ( "." );
+        else Serial.println ();
     }
     udp.begin ( 8888 ); // for connect to time server
     setSyncInterval ( SYNC_INTERVAL );
     setSyncProvider ( getNtpTime );
-    MY_SERIAL.print ( "[SETUP] now: " );
+    Serial.print ( "[SETUP] now: " );
     digitalClockDisplay ( now () );
 
 	// --- msgText -------------------------------------------------------------
 	
 	for ( int i = 0; i < NUM_MESSAGES; i++ ) {
 		isMsgText [i] = false;
-		isMsgEnabled [i] = true;
+		if ( i == 1 || i == 4 || i == 5 ) {
+			isMsgEnabled [i] = false;
+		}
+		else {
+			isMsgEnabled [i] = true;
+		}
 	}
 
     // --- init mqtt -----------------------------------------------------------
-    MY_SERIAL << "[SETUP] mqtt: server=" << MQTT_SERVER << " port=" << MQTT_PORT << " version=" << MQTT_VERSION << endl;
+    Serial << "[SETUP] mqtt: server=" << MQTT_SERVER << " port=" << MQTT_PORT << " version=" << MQTT_VERSION << endl;
     mqttClient.setServer ( MQTT_SERVER, MQTT_PORT );
     mqttClient.setCallback ( mqttCallback );
     // mqttClient.setClient ( wifiClient );
@@ -246,7 +250,7 @@ void setup () {
 
     delay ( SETUP_DELAY );
     clearMatrix ();
-
+	
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------------------
@@ -260,10 +264,15 @@ void setup () {
         "time" : true,
         "date" : true,
         "weekday" : true,
-		"enabled" : [ true, ..., false ]     // flags for 10 messages
+		"enabled" : [ "on", ..., "off" ]     // flags for 20 messages
     },
     "messages" : [ // no is 0 .. 9
-        { "line" : n, "text" : "string", "clear" : true },      // clear "overwrites" text, clear = false has no effect
+        { 
+			"line" : n, 
+			"text" : "string", 
+			"enabled" : "on"
+			"clear" : true 				// clear "overwrites" text, clear = false has no effect
+		},      
     ],
     "alert" : {
         "duration" : nn,
@@ -273,102 +282,137 @@ void setup () {
 
 */
 
+/*
+	further topics
+	
+	nodes@home/display/pixel/kitchen/command						payload is json like above described
+	nodes@home/display/pixel/kitchen/alert							payload is the json like above for alert attribute
+	
+	nodes@home/display/pixel/kitchen/message/temperature/indoor		payload is a json with the temperature and unit
+	nodes@home/display/pixel/kitchen/message/temperature/outdoor	payload is a json with the temperature and unit
+	nodes@home/display/pixel/kitchen/message/temperature/pool		payload is a json with the temperature and unit
+	
+	nodes@home/display/pixel/kitchen/message/forecast				payload is a json like for messages above
+	
+	nodes@home/display/pixel/kitchen/message/calendar/garbage		json
+	nodes@home/display/pixel/kitchen/message/calendar/paper			json
+	nodes@home/display/pixel/kitchen/message/calendar/yellowbag		json
+	nodes@home/display/pixel/kitchen/message/calendar/biowaste		json
+	nodes@home/display/pixel/kitchen/message/calendar				reset
+	
+	nodes@home/display/pixel/kitchen/message/traffic/undine			json
+	nodes@home/display/pixel/kitchen/message/traffic/andreas		json
+	nodes@home/display/pixel/kitchen/message/traffic				reset
+
+*/
+
 void mqttCallback ( char* topic, byte* payload, unsigned int payloadLength ) {
 
-    MY_SERIAL.print ( "[MQTT] payloadLength=" );
-    MY_SERIAL.println ( payloadLength );
+    Serial.print ( "[MQTT] payloadLength=" );
+    Serial.println ( payloadLength );
 
-    MY_SERIAL.print ( "]" );
-    for ( int i = 0; i < payloadLength; i++ ) MY_SERIAL.print ( (char) payload [i] );
-    MY_SERIAL.println ( "[" );
+    Serial.print ( "]" );
+    for ( int i = 0; i < payloadLength; i++ ) Serial.print ( (char) payload [i] );
+    Serial.println ( "[" );
 
-    char buf [512] = { 0 };
+    char buf [1024] = { 0 };
     int len = payloadLength < sizeof ( buf ) ? payloadLength : sizeof ( buf ) - 1;
     strncpy ( buf, (const char*) payload, len );
     buf [len] = '\0';
 
-    StaticJsonBuffer<512> jsonBuffer;
+    StaticJsonBuffer<1024> jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject ( buf );
 
-    if ( strcmp ( topic, MQTT_TOPIC_COMMAND ) == 0 ) {
+    if  ( !root.success () ) {
+        Serial.println ( "parsing failed" );
+		return;
+	}
 
-        MY_SERIAL << "[MQTT] command topic" << endl;
+	// if ( strcmp ( topic, MQTT_TOPIC_COMMAND ) == 0 ) {
+    if (
+		strncmp ( topic, MQTT_TOPIC_COMMAND, strlen ( MQTT_TOPIC_COMMAND ) ) == 0 
+		|| strncmp ( topic, MQTT_TOPIC_MESSAGE, strlen ( MQTT_TOPIC_MESSAGE ) ) == 0 
+		|| strncmp ( topic, MQTT_TOPIC_ALERT, strlen ( MQTT_TOPIC_ALERT ) ) == 0 
+	) {
 
-        if  ( root.success () ) {
-            // MY_SERIAL << "[MQTT] success" << endl;
-            if ( root.containsKey ( "display" ) ) {
-                // MY_SERIAL << "[MQTT] display" << endl;
-                JsonObject& display = root ["display"];
-                if ( display.containsKey ( "duration" ) ) {
-                    int duration = display ["duration"];
-                    if ( duration > 0 && duration < 20 ) {
-                        displayCategoryPeriod = duration;
-                    }
-                }
-                if ( display.containsKey ( "brightness" ) ) {
-                    int brightness = display ["brightness"];
-                    if ( brightness >= 0 && brightness < 16 ) {
-                        displayBrightness = brightness;
-                    }
-                }
-                if ( display.containsKey ( "time" ) ) {
-                    String state = display ["time"];
-                    isDisplayTime = state == "on" ? true : false;
-                }
-                if ( display.containsKey ( "date" ) ) {
-                    String state = display ["date"];
-                    isDisplayDate = state == "on" ? true : false;
-                }
-                if ( display.containsKey ( "weekday" ) ) {
-                    String state = display ["weekday"];
-                    isDisplayWeekday = state == "on" ? true : false;
-                }
-				if ( display.containsKey ( "enabled" ) && display ["enabled"].is<JsonArray&> () ) {
-					JsonArray& enabled = display ["enabled"];
-					for ( int i = 0; i < NUM_MESSAGES; i++ ) {
-						String state = enabled.get<String> ( i );
-						// MY_SERIAL << "i=" << i << " state=" << state << endl;
-						isMsgEnabled [i] = state == "off" ? false : true;
+        Serial << "[MQTT] topic=" << topic << endl;
+
+		// Serial << "[MQTT] success" << endl;
+		if ( root.containsKey ( "display" ) ) {
+			// Serial << "[MQTT] display" << endl;
+			JsonObject& display = root ["display"];
+			if ( display.containsKey ( "duration" ) ) {
+				int duration = display ["duration"];
+				if ( duration > 0 && duration < 20 ) {
+					displayCategoryPeriod = duration;
+				}
+			}
+			if ( display.containsKey ( "brightness" ) ) {
+				int brightness = display ["brightness"];
+				if ( brightness >= 0 && brightness < 16 ) {
+					displayBrightness = brightness;
+				}
+			}
+			if ( display.containsKey ( "time" ) ) {
+				String state = display ["time"];
+				isDisplayTime = state == "on" ? true : false;
+			}
+			if ( display.containsKey ( "date" ) ) {
+				String state = display ["date"];
+				isDisplayDate = state == "on" ? true : false;
+			}
+			if ( display.containsKey ( "weekday" ) ) {
+				String state = display ["weekday"];
+				isDisplayWeekday = state == "on" ? true : false;
+			}
+			if ( display.containsKey ( "enabled" ) && display ["enabled"].is<JsonArray&> () ) {
+				JsonArray& enabled = display ["enabled"];
+				int len = NUM_MESSAGES;
+				if ( enabled.size () < len ) len = enabled.size ();
+				for ( int i = 0; i < len; i++ ) {
+					String state = enabled.get<String> ( i );
+					// Serial << "i=" << i << " state=" << state << endl;
+					isMsgEnabled [i] = state == "off" ? false : true;
+				}
+			}
+		}
+		if ( root.containsKey ( "messages" ) ) {
+			// Serial << "[MQTT] messages" << endl;
+			const JsonArray& jsonArray = root ["messages"];
+			const int size = jsonArray.size ();
+			Serial.printf ( "messages [] size=%d\n", size );
+			for ( int i = 0; i < size; i++ ) {
+				const int line = jsonArray [i] ["line"];
+				const String text = jsonArray [i] ["text"];
+				const boolean clear = jsonArray [i] ["clear"];
+				// Serial << "i=" << i << " line=" << line << " text=" << text << " clear=" << clear << endl;
+				if ( line >= 0 && line < NUM_MESSAGES ) {
+					if ( clear ) {
+						isMsgText [line] = false;
+					}
+					else {
+						isMsgText [line] = true;
+						snprintf ( (char*) (msgText + line), 200, "%s", text.c_str () );
 					}
 				}
-            }
-            if ( root.containsKey ( "messages" ) ) {
-                // MY_SERIAL << "[MQTT] messages" << endl;
-                const JsonArray& jsonArray = root ["messages"];
-                const int size = jsonArray.size ();
-                MY_SERIAL.printf ( "messages [] size=%d\n", size );
-                for ( int i = 0; i < size; i++ ) {
-                    const int line = jsonArray [i] ["line"];
-                    const String text = jsonArray [i] ["text"];
-                    const boolean clear = jsonArray [i] ["clear"];
-                    // MY_SERIAL << "i=" << i << " line=" << line << " text=" << text << " clear=" << clear << endl;
-                    if ( line >= 0 && line < 10 ) {
-                        if ( clear ) {
-                            isMsgText [line] = false;
-                        }
-                        else {
-                            isMsgText [line] = true;
-                            snprintf ( (char*) (msgText + line), 200, "%s", text.c_str () );
-                        }
-                    }
-                }
-            }
-            if ( root.containsKey ( "alert" ) ) {
-                MY_SERIAL << "[MQTT] alert" << endl;
-                JsonObject& alert = root ["alert"];
-                if ( alert.containsKey ( "text" ) ) {
-                    const int duration = alert ["duration"];
-                    alertDisplayDuration = duration > 0 ? duration : DEFAULT_ALERT_DISPLAY_DURATION;
-                    const char* text = alert ["text"];
-                    clearMatrix ();
-                    matrix.init ();
-                    matrixAppendText ( text );
-                }
-            }
-        }
-        else {
-            MY_SERIAL.println ( "parsing failed" );
-        }
+				if ( jsonArray [i].as<JsonObject&> ().containsKey ( "enabled" ) ) {
+					const boolean enabled = jsonArray [i] ["enabled"];
+					isMsgEnabled [line] = enabled;
+				}
+			}
+		}
+		if ( root.containsKey ( "alert" ) ) {
+			Serial << "[MQTT] alert" << endl;
+			JsonObject& alert = root ["alert"];
+			if ( alert.containsKey ( "text" ) ) {
+				const int duration = alert ["duration"];
+				alertDisplayDuration = duration > 0 ? duration : DEFAULT_ALERT_DISPLAY_DURATION;
+				const char* text = alert ["text"];
+				clearMatrix ();
+				matrix.init ();
+				matrixAppendText ( text );
+			}
+		}
 
     }
 
@@ -379,26 +423,30 @@ void mqttReconnect () {
     // Loop until we're reconnected
     if ( !mqttClient.connected () && (lastMqttReconnect + MQTT_RECONNECT_PERIOD) < millis () ) {
 
-        MY_SERIAL.print ( "[MQTT] Attempting MQTT connection ... " );
+        Serial.print ( "[MQTT] Attempting MQTT connection ... " );
 
         lastMqttReconnect = millis ();
 
         // Attempt to connect
         if ( mqttClient.connect ( MQTT_CLIENT_ID ) ) {
 
-            MY_SERIAL.println ( "connected" );
+            Serial.println ( "connected" );
             // Once connected, publish an announcement...
             mqttClient.publish ( MQTT_TOPIC_BASE, VERSION, true ); // retained = true	
             // ... and resubscribe
-            boolean rc = mqttClient.subscribe ( MQTT_TOPIC_COMMAND );
-            MY_SERIAL << "[MQTT] mqttClient.subscribe rc=" << rc << endl;
+            boolean rc1 = mqttClient.subscribe ( MQTT_TOPIC_COMMAND );
+            Serial << "[MQTT] mqttClient.subscribe command rc=" << rc1 << endl;
+            boolean rc2 = mqttClient.subscribe ( MQTT_TOPIC_MESSAGE_SUBSCRIPTION );
+            Serial << "[MQTT] mqttClient.subscribe message rc=" << rc2 << endl;
+            boolean rc3 = mqttClient.subscribe ( MQTT_TOPIC_ALERT );
+            Serial << "[MQTT] mqttClient.subscribe allert rc=" << rc3 << endl;
 
         }
         else {
 
-            MY_SERIAL.print ( "failed, rc=" );
-            MY_SERIAL.print ( mqttClient.state () );
-            MY_SERIAL.println ( " try again in 5 seconds" );
+            Serial.print ( "failed, rc=" );
+            Serial.print ( mqttClient.state () );
+            Serial.println ( " try again in 5 seconds" );
 
         }
     }
@@ -659,7 +707,7 @@ void matrixDisplayTime ( time_t time ) {
     char buf [len];
 
     sprintf ( buf, "%02d%c%02d", hour ( time ), second ( time ) % 2 == 0 ? ':' : ' ', minute ( time ) );
-    // MY_SERIAL.println ( buf );
+    // Serial.println ( buf );
 
     matrixInsertColumn = 21;
     matrixDisplayColumn = 0;
@@ -679,7 +727,7 @@ void matrixDisplayDate ( time_t time ) {
     char buf [len];
 
     sprintf ( buf, "%02d.%02d.%04d", day ( time ), month ( time ), year ( time ) );
-    // MY_SERIAL.println ( buf );
+    // Serial.println ( buf );
 
     matrixInsertColumn = 9;
 
@@ -813,16 +861,16 @@ unsigned long recvNtpTime () {
 void digitalClockDisplay ( time_t time ){
 
   // digital clock display of the time
-  MY_SERIAL.print ( hour ( time ) );
+  Serial.print ( hour ( time ) );
   printDigits ( minute ( time ) );
   printDigits ( second ( time ) );
-  MY_SERIAL.print ( " " );
-  MY_SERIAL.print ( day ( time ));
-  MY_SERIAL.print ( "." );
-  MY_SERIAL.print ( month ( time ) );
-  MY_SERIAL.print ( "." );
-  MY_SERIAL.print ( year ( time ) );
-  MY_SERIAL.println ();
+  Serial.print ( " " );
+  Serial.print ( day ( time ));
+  Serial.print ( "." );
+  Serial.print ( month ( time ) );
+  Serial.print ( "." );
+  Serial.print ( year ( time ) );
+  Serial.println ();
 
 }
 
@@ -831,9 +879,9 @@ void digitalClockDisplay ( time_t time ){
 void printDigits ( int digits ) {
 
   // utility for digital clock display: prints preceding colon and leading 0
-  MY_SERIAL.print ( ":" );
-  if ( digits < 10 ) MY_SERIAL.print ( '0' );
-  MY_SERIAL.print ( digits );
+  Serial.print ( ":" );
+  if ( digits < 10 ) Serial.print ( '0' );
+  Serial.print ( digits );
 
 }
 
@@ -847,7 +895,7 @@ char* getMsgText ( int msg ) {
         if ( isMsgText [msg] ) result = (char*) msgText [msg];
     }
 
-    // MY_SERIAL.printf ( "getMsgText: msg=%d result=%s\n", msg, result );
+    // Serial.printf ( "getMsgText: msg=%d result=%s\n", msg, result );
 
     return result;
 
@@ -929,6 +977,16 @@ void loop() {
                     case 10: // msg [7]
                     case 11: // msg [8]
                     case 12: // msg [9]
+                    case 13: // msg [10]
+                    case 14: // msg [11]
+                    case 15: // msg [12]
+                    case 16: // msg [13]
+                    case 17: // msg [14]
+                    case 18: // msg [15]
+                    case 19: // msg [16]
+                    case 20: // msg [17]
+                    case 21: // msg [18]
+                    case 22: // msg [19]
                         matrixInsertColumn = 0;
                         alertDisplayDuration = -1;
                         if ( isMsgText [msg] && isMsgEnabled [msg] ) {
